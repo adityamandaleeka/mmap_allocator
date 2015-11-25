@@ -1,14 +1,18 @@
-#include <climits>
-#include <cstring>
-#include <errno.h>
-#include <stdio.h>
-#include <sys/mman.h>
+// Copyright 2015 Aditya Mandaleeka
 
 #include "allocator.h"
 
-namespace Alloc 
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <sys/mman.h>
+
+#include <climits>
+#include <cstring>
+
+namespace Alloc
 {
-    void* AllocationManager::AllocMem(unsigned long long numBytes)
+    void* AllocationManager::AllocMem(uint32_t numBytes)
     {
         if (numBytes == 0)
         {
@@ -59,7 +63,7 @@ namespace Alloc
     int AllocationManager::FreeMem(void* addr, int numBytes)
     {
         // This assumes page is aligned to 4096-byte boundary
-        void* startOfPage = (void*) ((unsigned long long)addr & ~(unsigned long long)0xFFF);
+        void* startOfPage = (void*) ((uint64_t)addr & ~0xFFF);
 
         int pageNumToFreeIn = -1;
         for (int i = 0; i < numPagesUsed; i++)
@@ -79,7 +83,7 @@ namespace Alloc
 
         int numChunks = GetNumberOfChunks(numBytes);
 
-        int positionOfFirstChunk = ((unsigned long long)addr - (unsigned long long)startOfPage) / chunkSize;
+        int positionOfFirstChunk = ((char*)addr - (char*)startOfPage) / chunkSize;
 
         ChangePageUsage(pageNumToFreeIn, positionOfFirstChunk, numChunks, false /* indicates free */);
 
@@ -88,7 +92,7 @@ namespace Alloc
         return 0;
     }
 
-    int AllocationManager::GetNumberOfChunks(unsigned long numBytes)
+    int AllocationManager::GetNumberOfChunks(uint32_t numBytes)
     {
         int numChunks = (numBytes % chunkSize) == 0 ? numBytes / chunkSize : numBytes / chunkSize + 1;
         Logger::Log(Logger::LOG_LEVEL_INFO, "%d chunks for %lu bytes", numChunks, numBytes);
@@ -108,8 +112,15 @@ namespace Alloc
 
         Logger::Log(Logger::LOG_LEVEL_INFO, "Allocating new page.");
 
-        void* newPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
-        if ((unsigned long long)newPage & 0xFFF)
+        void* newPage = mmap(
+            nullptr,
+            pageSize,
+            PROT_READ | PROT_WRITE | PROT_EXEC,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            0,
+            0);
+
+        if ((uint64_t)newPage & 0xFFF)
         {
             Logger::Log(Logger::LOG_LEVEL_ERROR, "mmap allocated page at %p! errno is %x.", newPage, errno);
         }
@@ -122,13 +133,13 @@ namespace Alloc
 
     bool AllocationManager::CheckPageForAvailability(AllocatorPageInfo* pageInfo, int numChunks, /* _Out_ */ int* firstChunk)
     {
-        unsigned long long occupancy = pageInfo->occupancy;
+        uint64_t occupancy = pageInfo->occupancy;
 
         // Check for numChunks consecutive 0's in occupancy.
         int firstChunkToUse = -1;
         for (int i = 0; i <= (chunksPerPage - numChunks); i++)
         {
-            unsigned long long mask = ULLONG_MAX >> (64 - numChunks);
+            uint64_t mask = ULLONG_MAX >> (64 - numChunks);
             if (((mask << i) & occupancy) == 0)
             {
                 firstChunkToUse = chunksPerPage - numChunks - i;
@@ -146,17 +157,20 @@ namespace Alloc
                 return true;
             }
         }
-        
+
         return false;
     }
 
-    void* AllocationManager::ChangePageUsage(int pageNum, int firstChunk, unsigned long long numChunks, bool allocateOrFree)
+    void* AllocationManager::ChangePageUsage(int pageNum, int firstChunk, uint32_t numChunks, bool allocateOrFree)
     {
-        Logger::Log(Logger::LOG_LEVEL_INFO, "ChangePageUsage called. Page is %d, firstChunk is %d, numChunks is %d. %s", pageNum, firstChunk, numChunks, allocateOrFree ? "allocating." : "freeing.");
+        Logger::Log(
+            Logger::LOG_LEVEL_INFO,
+            "ChangePageUsage called. Page is %d, firstChunk is %d, numChunks is %d. %s",
+            pageNum, firstChunk, numChunks, allocateOrFree ? "allocating." : "freeing.");
 
         AllocatorPageInfo& pageInfo = pageInfos[pageNum];
 
-        unsigned long long mask = ULLONG_MAX >> (64 - numChunks);
+        uint64_t mask = ULLONG_MAX >> (64 - numChunks);
         mask = mask << (chunksPerPage - firstChunk - numChunks);
 
         Logger::LogAsBitString(Logger::LOG_LEVEL_INFO, "Occupancy before operation is: ", pageInfo.occupancy);
@@ -165,7 +179,7 @@ namespace Alloc
 
         Logger::LogAsBitString(Logger::LOG_LEVEL_INFO, "Occupancy after operation is:  ", pageInfo.occupancy);
 
-        void* addrOfAlloc = (void*) ((unsigned long)pageInfo.address + firstChunk * chunkSize);
+        void* addrOfAlloc = (char*)pageInfo.address + firstChunk * chunkSize;
         return addrOfAlloc;
     }
-}
+}  // namespace Alloc
