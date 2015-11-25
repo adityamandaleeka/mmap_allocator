@@ -14,17 +14,24 @@ namespace Alloc
 
         static void Log(LOG_LEVEL level, const char *format, ...)
         {
-            if(currentLevel >= level)
+            if (currentLevel >= level)
             {
-                std::string inStr(format);
 
                 if (level == LOG_LEVEL_ERROR)
                 {
-                    ::printf(ANSI_COLOR_RED "%s" ANSI_COLOR_RESET "\n", format);
+                    fprintf(stderr, ANSI_COLOR_RED);
                 }
-                else
+
+                va_list argptr;
+                va_start(argptr, format);
+                vfprintf(stderr, format, argptr);
+                va_end(argptr);
+
+                fprintf(stderr, "\n");
+
+                if (level == LOG_LEVEL_ERROR)
                 {
-                    ::printf("%s\n", format);
+                    fprintf(stderr, ANSI_COLOR_RESET);
                 }
             }
         }
