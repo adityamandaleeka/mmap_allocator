@@ -28,33 +28,32 @@ namespace Alloc
             return nullptr;
         }
 
-        int pageToAllocateOn = -1;
         int firstChunk = -1;
-        for (int pageNum = 0; pageNum < numPagesUsed; pageNum++)
+        AllocatorPageInfo *pageToAllocateOn = nullptr;
+
+        for (AllocatorPageInfo *currPageInfo = pageInfos; currPageInfo != nullptr; currPageInfo = currPageInfo->nextPageInfo)
         {
-            AllocatorPageInfo currPageInfo = pageInfos[pageNum];
-            if (CheckPageForAvailability(&currPageInfo, numChunks, &firstChunk))
+            if (CheckPageForAvailability(currPageInfo, numChunks, &firstChunk))
             {
-                pageToAllocateOn = pageNum;
+                pageToAllocateOn = currPageInfo;
                 break;
             }
         }
 
-        if (pageToAllocateOn == -1)
+        if (pageToAllocateOn == nullptr)
         {
             // No page had availability, so create a new page and use that.
-            if (AddNewPage() != 0)
+            pageToAllocateOn = AddNewPage();
+            if (pageToAllocateOn == nullptr)
             {
                 Logger::Log(Logger::LOG_LEVEL_ERROR, "Call to AddNewPage failed!\n");
                 return nullptr;
             }
 
-            if (!CheckPageForAvailability(&pageInfos[numPagesUsed-1], numChunks, &firstChunk))
+            if (!CheckPageForAvailability(pageToAllocateOn, numChunks, &firstChunk))
             {
                 Logger::Log(Logger::LOG_LEVEL_ERROR, "No availability on new page!");
             }
-
-            pageToAllocateOn = numPagesUsed - 1;
         }
 
         return ChangePageUsage(pageToAllocateOn, firstChunk, numChunks, true /* allocate */);
@@ -65,17 +64,16 @@ namespace Alloc
         // This assumes page is aligned to 4096-byte boundary
         void* startOfPage = (void*) ((uint64_t)addr & ~0xFFF);
 
-        int pageNumToFreeIn = -1;
-        for (int i = 0; i < numPagesUsed; i++)
+        AllocatorPageInfo *pageToFreeIn = nullptr;
+        for (AllocatorPageInfo *currPageInfo = pageInfos; currPageInfo != nullptr; currPageInfo = currPageInfo->nextPageInfo)
         {
-            if (pageInfos[i].address == startOfPage)
+            if (currPageInfo->address == startOfPage)
             {
-                pageNumToFreeIn = i;
-                break;
+                pageToFreeIn = currPageInfo;
             }
         }
 
-        if (pageNumToFreeIn == -1)
+        if (pageToFreeIn == nullptr)
         {
             Logger::Log(Logger::LOG_LEVEL_ERROR, "Couldn't locate page in which to free!");
             return -1;
@@ -85,7 +83,7 @@ namespace Alloc
 
         int positionOfFirstChunk = ((char*)addr - (char*)startOfPage) / chunkSize;
 
-        ChangePageUsage(pageNumToFreeIn, positionOfFirstChunk, numChunks, false /* indicates free */);
+        ChangePageUsage(pageToFreeIn, positionOfFirstChunk, numChunks, false /* indicates free */);
 
         // Want to write a pattern over this memory if in debug?
 
@@ -100,14 +98,8 @@ namespace Alloc
         return numChunks;
     }
 
-    int AllocationManager::AddNewPage()
+    AllocatorPageInfo* AllocationManager::AddNewPage()
     {
-        if (numPagesUsed >= maxPages)
-        {
-            Logger::Log(Logger::LOG_LEVEL_ERROR, "Too many pages!");
-            return -1;
-        }
-
         // TODO: add c-sec or something if needed
 
         Logger::Log(Logger::LOG_LEVEL_INFO, "Allocating new page.");
@@ -125,10 +117,13 @@ namespace Alloc
             Logger::Log(Logger::LOG_LEVEL_ERROR, "mmap allocated page at %p! errno is %x.", newPage, errno);
         }
 
-        pageInfos[numPagesUsed].address = newPage;
-        numPagesUsed++;
+        AllocatorPageInfo *newPageInfo = new AllocatorPageInfo();
+        newPageInfo->address = newPage;
+        newPageInfo->nextPageInfo = pageInfos;
 
-        return 0;
+        pageInfos = newPageInfo;
+
+        return newPageInfo;
     }
 
     bool AllocationManager::CheckPageForAvailability(AllocatorPageInfo* pageInfo, int numChunks, /* _Out_ */ int* firstChunk)
@@ -161,25 +156,25 @@ namespace Alloc
         return false;
     }
 
-    void* AllocationManager::ChangePageUsage(int pageNum, int firstChunk, uint32_t numChunks, bool allocateOrFree)
+    void* AllocationManager::ChangePageUsage(AllocatorPageInfo* pageInfo, int firstChunk, uint32_t numChunks, bool allocateOrFree)
     {
         Logger::Log(
             Logger::LOG_LEVEL_INFO,
-            "ChangePageUsage called. Page is %d, firstChunk is %d, numChunks is %d. %s",
-            pageNum, firstChunk, numChunks, allocateOrFree ? "allocating." : "freeing.");
-
-        AllocatorPageInfo& pageInfo = pageInfos[pageNum];
+            "ChangePageUsage called. Page is %p, firstChunk is %d, numChunks is %d. %s",
+            pageInfo, firstChunk, numChunks, allocateOrFree ? "allocating." : "freeing.");
 
         uint64_t mask = ULLONG_MAX >> (64 - numChunks);
         mask = mask << (chunksPerPage - firstChunk - numChunks);
 
-        Logger::LogAsBitString(Logger::LOG_LEVEL_INFO, "Occupancy before operation is: ", pageInfo.occupancy);
+        Logger::LogAsBitString(Logger::LOG_LEVEL_INFO, "Occupancy before operation is: ", pageInfo->occupancy);
 
-        pageInfo.occupancy = allocateOrFree ? (pageInfo.occupancy | mask) : (pageInfo.occupancy ^ mask);
 
-        Logger::LogAsBitString(Logger::LOG_LEVEL_INFO, "Occupancy after operation is:  ", pageInfo.occupancy);
+        uint64_t prevOccupancy = pageInfo->occupancy;
+        pageInfo->occupancy = allocateOrFree ? (prevOccupancy | mask) : (prevOccupancy ^ mask);
 
-        void* addrOfAlloc = (char*)pageInfo.address + firstChunk * chunkSize;
+        Logger::LogAsBitString(Logger::LOG_LEVEL_INFO, "Occupancy after operation is:  ", pageInfo->occupancy);
+
+        void* addrOfAlloc = (char*)pageInfo->address + firstChunk * chunkSize;
         return addrOfAlloc;
     }
 }  // namespace Alloc

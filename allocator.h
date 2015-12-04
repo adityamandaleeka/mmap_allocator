@@ -16,23 +16,24 @@ struct AllocatorPageInfo
     // 64 bits representing the 64 chunks of the page
     uint64_t occupancy;
 
+    AllocatorPageInfo *nextPageInfo;
+
     AllocatorPageInfo()
     {
         address = nullptr;
         occupancy = 0;
+        nextPageInfo = nullptr;
     }
 };
 
 class AllocationManager
 {
  public:
-    AllocationManager(int pageSize, int chunkSize, int maxPages)
+    AllocationManager(int pageSize, int chunkSize)
         : pageSize(pageSize)
         , chunkSize(chunkSize)
-        , maxPages(maxPages)
     {
-        pageInfos = new AllocatorPageInfo[maxPages];
-        numPagesUsed = 0;
+        pageInfos = nullptr;
 
         chunksPerPage = pageSize / chunkSize;
         if ((pageSize % chunkSize) != 0)
@@ -46,14 +47,12 @@ class AllocationManager
 
  private:
     int GetNumberOfChunks(uint32_t numBytes);
-    int AddNewPage();
+    AllocatorPageInfo* AddNewPage();
     bool CheckPageForAvailability(AllocatorPageInfo* pageInfo, int numChunks, /* _Out_ */ int* firstChunk);
-    void* ChangePageUsage(int pageNum, int firstChunk, uint32_t numChunks, bool allocateOrFree);
+    void* ChangePageUsage(AllocatorPageInfo* pageInfo, int firstChunk, uint32_t numChunks, bool allocateOrFree);
 
  private:
     AllocatorPageInfo* pageInfos;
-    int numPagesUsed;
-    int maxPages;
     int pageSize;
     int chunkSize;
     int chunksPerPage;
